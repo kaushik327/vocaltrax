@@ -139,6 +139,19 @@ def main(cfg: Config) -> None:
         audio = tract_apply(params, rngs={"params": key})
         # Calculate loss
         loss = loss_func(preloss_func(spec_func(audio)), loss_target)
+
+        # Temporal regularization: λ Σ_t ||a^(t+1) - a^(t)||^2
+        if cfg.general.temporal_regularization:
+            def temporal_penalty(x):
+                if (len(x.shape) > 0) and (x.shape[0] == n_frames):
+                    return jnp.sum(jnp.diff(x, axis=0) ** 2)
+                return 0.0
+            reg = jax.tree_util.tree_reduce(
+                lambda a, b: a + b,
+                jax.tree_util.tree_map(temporal_penalty, params),
+            )
+            loss = loss + cfg.general.temporal_lambda * reg
+
         return loss, audio
 
     # Gradient should use only the 1st element (loss)
@@ -150,8 +163,8 @@ def main(cfg: Config) -> None:
     # Optimization loop
     pbar = tqdm(range(cfg.general.iters))
     for i in pbar:
-        # Smoothing
-        if ((i + 1) % cfg.general.smooth_every) == 0:
+        # Smoothing (skipped when temporal regularization is active)
+        if not cfg.general.temporal_regularization and ((i + 1) % cfg.general.smooth_every) == 0:
             params = jax.tree_util.tree_map(
                 lambda x : (
                     (

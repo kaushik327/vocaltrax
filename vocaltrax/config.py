@@ -57,6 +57,11 @@ class General:
     # Smoothing frequency
     smooth_every: int
 
+    # Temporal regularization (replaces Savitzky-Golay with in-loss penalty)
+    temporal_regularization: bool
+    # Temporal regularization weight (lambda)
+    temporal_lambda: float
+
     # Audio processing parameters
     n_fft: int
     win_length: int

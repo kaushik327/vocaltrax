@@ -39,6 +39,11 @@ general:
   # Smoothing frequency
   smooth_every: 200
 
+  # Temporal regularization (replaces Savitzky-Golay with in-loss penalty)
+  temporal_regularization: false
+  # Temporal regularization weight (lambda)
+  temporal_lambda: 0.01
+
   # Audio processing parameters
   n_fft: 512
   win_length: 512
