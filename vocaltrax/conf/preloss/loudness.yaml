@@ -1,0 +1,8 @@
+# Perceptually weighted (A-weighting) preloss function
+name: loudness
+fun:
+  _target_: utils.misc.preloss_loudness
+  n_mels: ${general.n_mels}
+  sample_rate: ${general.sample_rate}
+  f_min: ${general.f_min}
+  f_max: ${general.f_max}

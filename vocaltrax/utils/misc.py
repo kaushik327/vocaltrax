@@ -67,6 +67,11 @@ def preloss_norm(spec):
 def preloss_log(spec):
     return jnp.log10(jnp.abs(spec) + 1e-6)
 
+def preloss_loudness(spec, n_mels, sample_rate, f_min, f_max):
+    from utils.audio import perceptual_weight_vector
+    w = perceptual_weight_vector(n_mels, sample_rate, f_min, f_max)
+    return jnp.log10(jnp.abs(spec) + 1e-6) * w
+
 def mse(pred, target):
     return jnp.mean(jnp.square((pred - target)))
 
