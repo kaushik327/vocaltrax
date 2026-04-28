@@ -12,3 +12,5 @@ crepe
 audax
 tensorflow
 scipy
+praat-parselmouth
+matplotlib

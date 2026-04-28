@@ -42,6 +42,7 @@ from tract import VocalTract
 from utils.random import PRNGKey
 from utils.hydra import print_config
 from utils.misc import frameaudio, mse, jax_to_numpy
+from utils.formants import extract_formants, formant_trajectory_error
 
 config_store = hydra.core.config_store.ConfigStore.instance()
 config_store.store(name="base_config", node=Config)
@@ -51,6 +52,10 @@ def main(cfg: Config) -> None:
     # Print config
     OmegaConf.resolve(cfg)
     print_config(cfg)
+
+    # Set JAX platform from config and enable persistent compilation cache
+    jax.config.update("jax_default_device", jax.devices(cfg.system.device)[0])
+    jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 
     ##############################################
     # Seeding
@@ -226,6 +231,17 @@ def main(cfg: Config) -> None:
     # Save JAX params
     with open(os.path.join(log_dir, "params.json"), "w") as f:
         f.write(json.dumps(jax_to_numpy(params), indent=4))
+
+    # Formant-based evaluation
+    target_fmt = extract_formants(np.array(target[: len(audio)]), sr)
+    resynth_fmt = extract_formants(np.array(audio), sr)
+    fmt_metrics = formant_trajectory_error(target_fmt, resynth_fmt)
+    with open(os.path.join(log_dir, "formant_metrics.json"), "w") as f:
+        json.dump(fmt_metrics, f, indent=2)
+    print(f"Formant metrics: F1 RMSE={fmt_metrics['f1_rmse']:.1f} Hz, "
+          f"F2 RMSE={fmt_metrics['f2_rmse']:.1f} Hz, "
+          f"F1 corr={fmt_metrics['f1_corr']:.4f}, "
+          f"F2 corr={fmt_metrics['f2_corr']:.4f}")
 
 if __name__ == "__main__":
     main()
