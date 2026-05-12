@@ -33,6 +33,7 @@ import crepe
 import numpy as np
 import scipy.signal
 from omegaconf import OmegaConf
+from utils.audio import resample_audio
 from config import Config
 from datetime import datetime
 from hashlib import sha256
@@ -77,14 +78,50 @@ def main(cfg: Config) -> None:
     # Load audio file
     ##############################################
 
-    target, sr = soundfile.read(cfg.general.target)
-    if len(target.shape) == 2: target = jnp.mean(target, axis=1)
+    target_raw, file_sr = soundfile.read(cfg.general.target)
+    if len(target_raw.shape) == 2: target_raw = np.mean(target_raw, axis=1)
+    target_raw = np.asarray(target_raw)
+
+    # Get fundamental frequency of each frame using CREPE (at original SR)
+    file_hash = sha256(target_raw.tobytes()).hexdigest()[:4]
+    target_sr = cfg.general.sample_rate
+    cache_path = (
+        Path(cfg.general.target).parent
+        / ".crepe_cache"
+        / f"{Path(cfg.general.target).stem}_sr={file_sr}_tsr={target_sr}_hop={cfg.general.hop_length}_{file_hash}.npz"
+    )
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if cache_path.exists():
+        print(f"Loading cached CREPE from {cache_path}")
+        freqs = np.load(cache_path)["freqs"]
+    else:
+        _, freqs, conf, _ = crepe.predict(
+            target_raw,
+            file_sr,
+            step_size=np.floor((cfg.general.hop_length / target_sr) * 1000),
+        )
+        freqs = freqs * (conf > 0.5)
+
+        # replace zeros with 1.0 to avoid division by zero
+        freqs = np.where(freqs > 0, freqs, 1.0)
+
+        np.savez(cache_path, freqs=freqs)
+        print(f"Saved CREPE cache to {cache_path}")
+
+    # Resample audio to target sample rate if needed
+    if file_sr != target_sr:
+        print(f"Resampling audio from {file_sr} Hz to {target_sr} Hz")
+        target_raw = resample_audio(target_raw, file_sr, target_sr)
+
+    target = jnp.array(target_raw)
     target = jnp.pad(
         target,
         (cfg.general.frame_length - (len(target) % cfg.general.frame_length)) % cfg.general.frame_length,
         mode='constant',
         constant_values=0
     )
+    sr = target_sr
 
     ##############################################
     # Divide audio in multiple frames
@@ -97,32 +134,6 @@ def main(cfg: Config) -> None:
         axis=0,
     )
     n_frames = len(frames)
-
-    # Get fundamental frequency of each frame using CREPE
-    file_hash = sha256(target.tobytes()).hexdigest()[:4]
-    cache_path = (
-        Path(cfg.general.target).parent
-        / ".crepe_cache"
-        / f"{Path(cfg.general.target).stem}_sr={sr}_hop={cfg.general.hop_length}_{file_hash}.npz"
-    )
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if cache_path.exists():
-        print(f"Loading cached CREPE from {cache_path}")
-        freqs = np.load(cache_path)["freqs"]
-    else:
-        _, freqs, conf, _ = crepe.predict(
-            np.array(target),
-            sr,
-            step_size=np.floor((cfg.general.hop_length / sr) * 1000),
-        )
-        freqs = freqs * (conf > 0.5)
-
-        # replace zeros with 1.0 to avoid division by zero
-        freqs = np.where(freqs > 0, freqs, 1.0)
-
-        np.savez(cache_path, freqs=freqs)
-        print(f"Saved CREPE cache to {cache_path}")
 
     freqs = freqs[:n_frames]
 

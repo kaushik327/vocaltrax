@@ -26,8 +26,19 @@ import jax
 import jax.numpy as jnp
 import chex
 import numpy as np
+import math
 from audax.core import functional
 from functools import partial
+from scipy.signal import resample_poly
+
+
+def resample_audio(audio: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
+    if orig_sr == target_sr:
+        return audio
+    gcd = math.gcd(int(orig_sr), int(target_sr))
+    up = int(target_sr) // gcd
+    down = int(orig_sr) // gcd
+    return resample_poly(audio, up, down).astype(audio.dtype)
 
 def _make_spec_func(
         n_fft,
