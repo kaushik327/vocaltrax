@@ -35,6 +35,8 @@ import scipy.signal
 from omegaconf import OmegaConf
 from config import Config
 from datetime import datetime
+from hashlib import sha256
+from pathlib import Path
 from tqdm import tqdm
 from tract import VocalTract
 from utils.random import PRNGKey
@@ -97,12 +99,31 @@ def main(cfg: Config) -> None:
     n_frames = len(frames)
 
     # Get fundamental frequency of each frame using CREPE
-    _, freqs, conf, _ = crepe.predict(
-        np.array(target),
-        sr,
-        step_size=np.floor((cfg.general.hop_length / sr) * 1000)
+    file_hash = sha256(target.tobytes()).hexdigest()[:4]
+    cache_path = (
+        Path(cfg.general.target).parent
+        / ".crepe_cache"
+        / f"{Path(cfg.general.target).stem}_sr={sr}_hop={cfg.general.hop_length}_{file_hash}.npz"
     )
-    freqs = freqs * (conf > 0.5)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if cache_path.exists():
+        print(f"Loading cached CREPE from {cache_path}")
+        freqs = np.load(cache_path)["freqs"]
+    else:
+        _, freqs, conf, _ = crepe.predict(
+            np.array(target),
+            sr,
+            step_size=np.floor((cfg.general.hop_length / sr) * 1000),
+        )
+        freqs = freqs * (conf > 0.5)
+
+        # replace zeros with 1.0 to avoid division by zero
+        freqs = np.where(freqs > 0, freqs, 1.0)
+
+        np.savez(cache_path, freqs=freqs)
+        print(f"Saved CREPE cache to {cache_path}")
+
     freqs = freqs[:n_frames]
 
     ##############################################
