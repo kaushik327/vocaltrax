@@ -193,6 +193,10 @@ def main(cfg: Config) -> None:
 
         # Log metrics to progress bar
         pbar.set_postfix({"loss": loss.item()})
+        if jnp.isnan(loss) or jnp.isinf(loss):
+            print(f"\nERROR: Loss became {loss.item()} at step {i}. Aborting.")
+            soundfile.write(os.path.join(log_dir, f"{i+1}_diverged.wav"), audio, sr)
+            break
         if ((i + 1) % cfg.general.log_every) == 0:
             soundfile.write(
                 os.path.join(log_dir, f"{i+1}.wav"), audio, sr
