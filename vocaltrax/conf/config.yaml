@@ -54,6 +54,13 @@ general:
   f_min: 60.0
   f_max: 7800.0
 
+  # Enhanced vocal tract features (feature flags)
+  add_nose: false        # Nasal tract coupling at velum
+  add_fricatives: false  # Turbulence noise at constrictions
+  add_tilt: false        # Glottal spectral tilt (1st-order lowpass)
+  add_radiation: false   # Radiation impedance (1st-order highpass at lips)
+  add_wall_loss: false   # Frequency-dependent wall losses
+
 ######################
 # System Settings
 ######################

@@ -136,6 +136,11 @@ def main(cfg: Config) -> None:
         frame_len=cfg.general.frame_length,
         sample_rate=cfg.general.sample_rate,
         f0s=jnp.array(freqs).reshape(len(freqs), 1),
+        add_nose=cfg.general.add_nose,
+        add_fricatives=cfg.general.add_fricatives,
+        add_tilt=cfg.general.add_tilt,
+        add_radiation=cfg.general.add_radiation,
+        add_wall_loss=cfg.general.add_wall_loss,
     )
     init_key = PRNG_key.split()
     params = tract.init(init_key)

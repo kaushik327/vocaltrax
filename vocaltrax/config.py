@@ -72,6 +72,13 @@ class General:
     f_min: float
     f_max: float
 
+    # Enhanced vocal tract features (feature flags)
+    add_nose: bool
+    add_fricatives: bool
+    add_tilt: bool
+    add_radiation: bool
+    add_wall_loss: bool
+
 #######################
 # Default Settings
 #######################
