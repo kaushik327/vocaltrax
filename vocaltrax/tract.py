@@ -336,9 +336,13 @@ def process_diams(
             input_filtered = input_sample
 
         # 2. Fricative noise (if enabled)
+        # Only inject noise when there's a tight constriction (reflection > threshold)
         if add_fricatives:
-            constriction_strength = jnp.max(jnp.abs(reflection))
-            fric_noise = noise_t * fric_t * constriction_strength * 2.0
+            constriction_threshold = 0.5
+            max_reflection = jnp.max(jnp.abs(reflection))
+            # Scale by how much constriction exceeds threshold (0 if below)
+            constriction_strength = jnp.maximum(0.0, max_reflection - constriction_threshold)
+            fric_noise = noise_t * fric_t * constriction_strength * 4.0
         else:
             fric_noise = 0.0
 
