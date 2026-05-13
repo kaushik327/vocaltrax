@@ -79,6 +79,9 @@ class General:
     add_radiation: bool
     add_wall_loss: bool
 
+    # Run name for distinguishing experiments
+    run_name: str
+
 #######################
 # Default Settings
 #######################

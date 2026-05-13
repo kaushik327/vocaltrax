@@ -63,13 +63,14 @@ def main(cfg: Config) -> None:
     ##############################################
 
     current_datetime = datetime.now().strftime("%a-%b-%d-%Y_%I-%M%p")
+    run_suffix = f"_{cfg.general.run_name}" if cfg.general.run_name else ""
     log_dir = os.path.join(
         cfg.general.log_dir,
         os.path.splitext(os.path.basename(cfg.general.target))[0], # Target name
         cfg.optimizer.name,
         cfg.spectrogram.name,
         cfg.preloss.name,
-        current_datetime
+        f"{current_datetime}{run_suffix}"
     )
     os.makedirs(log_dir, exist_ok=True)
 

@@ -61,6 +61,9 @@ general:
   add_radiation: false   # Radiation impedance (1st-order highpass at lips)
   add_wall_loss: false   # Frequency-dependent wall losses
 
+  # Run name for distinguishing experiments (empty = use timestamp only)
+  run_name: ""
+
 ######################
 # System Settings
 ######################
