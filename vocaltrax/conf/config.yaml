@@ -60,6 +60,9 @@ general:
   add_tilt: false        # Glottal spectral tilt (1st-order lowpass)
   add_radiation: false   # Radiation impedance (1st-order highpass at lips)
   add_wall_loss: false   # Frequency-dependent wall losses
+  add_postfilter: false  # Learnable output EQ filter (2nd-order IIR)
+  add_aspiration: false  # Learnable per-frame aspiration amplitude
+  add_rd: false          # Learnable per-frame Rd (voice quality) parameter
 
   # Run name for distinguishing experiments (empty = use timestamp only)
   run_name: ""

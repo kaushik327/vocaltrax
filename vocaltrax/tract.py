@@ -108,6 +108,22 @@ class PhysicalTract(nn.Module):
         return diams
 
 
+def apply_biquad(x: chex.Array, coeffs: chex.Array) -> chex.Array:
+    """Apply a biquad (2nd-order IIR) filter to signal x.
+    coeffs: [b0, b1, b2, a1, a2] — a0 is implicitly 1.0.
+    """
+    b0, b1, b2, a1, a2 = coeffs[0], coeffs[1], coeffs[2], coeffs[3], coeffs[4]
+
+    def step(carry, x_n):
+        x1, x2, y1, y2 = carry
+        y_n = b0 * x_n + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+        return (x_n, x1, y_n, y1), y_n
+
+    init = (0.0, 0.0, 0.0, 0.0)
+    _, y = jax.lax.scan(step, init, x)
+    return y
+
+
 class VocalTract(nn.Module):
     num_frames: int
     f0s: chex.Array
@@ -133,6 +149,9 @@ class VocalTract(nn.Module):
     add_tilt: bool = False
     add_radiation: bool = False
     add_wall_loss: bool = False
+    add_postfilter: bool = False
+    add_aspiration: bool = False
+    add_rd: bool = False
 
     def setup(self):
         self.key = self.make_rng("key")
@@ -172,6 +191,23 @@ class VocalTract(nn.Module):
                 lambda rng: jnp.zeros((self.num_frames, 1))
             )
 
+        # Learnable Rd parameter: controls voice quality (0.5=pressed, 2.7=breathy)
+        # Init at 0.5 (maps to Rd ~1.6 via unnormalize)
+        if self.add_rd:
+            self.rd_params = self.param(
+                "rd_params",
+                lambda rng: jnp.ones((self.num_frames, 1)) * 0.5
+            )
+
+        # Learnable per-frame aspiration amplitude
+        # Init at 0.2 (similar to default aspiration level)
+        if self.add_aspiration:
+            self.aspiration_amp = self.param(
+                "aspiration_amp",
+                lambda rng: jnp.ones((self.num_frames, 1)) * 0.2
+            )
+
+
     def __call__(self):
         diams = self.physical_apply(self.physical_params)
         tenses = unnormalize_params(
@@ -185,12 +221,27 @@ class VocalTract(nn.Module):
         tenses = upsample_frames(tenses, self.upsample_factor)
         f0s = upsample_frames(f0s, self.upsample_factor)
 
+        # Prepare optional glottal source params
+        rd = None
+        if self.add_rd:
+            rd = unnormalize_params(
+                jnp.clip(self.rd_params, 0, 1), 0.5, 2.7
+            )
+            rd = upsample_frames(rd, self.upsample_factor)
+
+        asp = None
+        if self.add_aspiration:
+            asp = jnp.clip(self.aspiration_amp, 0, 1)
+            asp = upsample_frames(asp, self.upsample_factor)
+
         waveform = glottis_make_waveform(
             tenses,
             f0s,
             jnp.zeros(self.frame_len//self.upsample_factor),
             self.sample_rate,
-            self.key
+            self.key,
+            rd_params=rd,
+            aspiration_amp=asp,
         )
 
         # Prepare optional parameters
@@ -211,7 +262,7 @@ class VocalTract(nn.Module):
             fricative = jnp.clip(self.fricative_intensity, 0, 1)
             fricative = upsample_frames(fricative, self.upsample_factor)
 
-        return process_diams(
+        out = process_diams(
             waveform,
             diams,
             self.glottal_reflection,
@@ -229,6 +280,8 @@ class VocalTract(nn.Module):
             add_radiation=self.add_radiation,
             add_wall_loss=self.add_wall_loss,
         )
+
+        return out
 
 
 def process_diams(

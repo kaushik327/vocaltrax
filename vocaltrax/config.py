@@ -78,6 +78,9 @@ class General:
     add_tilt: bool
     add_radiation: bool
     add_wall_loss: bool
+    add_postfilter: bool
+    add_aspiration: bool
+    add_rd: bool
 
     # Run name for distinguishing experiments
     run_name: str

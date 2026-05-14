@@ -33,12 +33,16 @@ def glottis_make_waveform(
     frame_len: chex.Array,
     sample_rate: int,
     key: jax.random.PRNGKey,
+    rd_params: chex.Array = None,
+    aspiration_amp: chex.Array = None,
 ) -> chex.Array:
     """
     Args:
         tenseness: [n_frames x 1]
         freqs: [n_frames x 1]
         frame_len: [frame_len x 1]
+        rd_params: optional [n_frames x 1], learnable Rd values (0.5-2.7)
+        aspiration_amp: optional [n_frames x 1], learnable aspiration amplitude
     """
     T = 1 / sample_rate
     n_frames = tenseness.shape[0]
@@ -64,43 +68,61 @@ def glottis_make_waveform(
         wav_len = 1 / freqs[0]
         t = jnp.mod(jnp.arange(n) * T, wav_len) / wav_len
 
+    # Prepare per-frame Rd and aspiration arrays
+    if rd_params is not None:
+        rd_per_frame = rd_params[:-1].ravel()
+    else:
+        rd_per_frame = None
+
+    if aspiration_amp is not None:
+        asp_per_frame = aspiration_amp[:-1].ravel()
+    else:
+        asp_per_frame = None
+
     keys = jax.random.split(key, n_frames)
     def one_frame(carry, input):
-        tensenessi, t_slice, key = input
-        params = setup_lf(tensenessi)  # Parallelizable?
+        tensenessi, t_slice, key, rd_i, asp_i = input
+        # Use learnable Rd if provided, otherwise derive from tenseness
+        lf_params = setup_lf(tensenessi, rd_override=rd_i)
 
-        greaterIdx = t_slice > params["Te"]
+        greaterIdx = t_slice > lf_params["Te"]
         result = jnp.where(
             greaterIdx,
-            (-jnp.exp(-params["epsilon"] * (t_slice - params["Te"])) + params["shift"])
-            / params["delta"],
-            params["EO"]
-            * jnp.exp(params["alpha"] * t_slice)
-            * jnp.sin(params["omega"] * t_slice),
+            (-jnp.exp(-lf_params["epsilon"] * (t_slice - lf_params["Te"])) + lf_params["shift"])
+            / lf_params["delta"],
+            lf_params["EO"]
+            * jnp.exp(lf_params["alpha"] * t_slice)
+            * jnp.sin(lf_params["omega"] * t_slice),
         )
         result *= (tensenessi**0.25)
 
-        # White Noise Addition
-        aspiration = (
-            (1 - jnp.sqrt(tensenessi))
-            * 0.2
-            * (jax.random.uniform(key, (frame_len,)) - 0.5)
-        )
-        aspiration *= 0.2
+        # White Noise Addition (with optional learnable amplitude)
+        # Tenseness envelope gates aspiration: breathy segments get more noise
+        tense_gate = (1 - jnp.sqrt(tensenessi))
+        # When learnable asp_i is active, it scales the gated noise; otherwise use default
+        asp_scale = jnp.where(asp_i >= 0, asp_i * tense_gate, tense_gate * 0.2)
+        aspiration = asp_scale * (jax.random.uniform(key, (frame_len,)) - 0.5) * 0.2
         result += aspiration
         return 0.0, result
 
+    # Build scan inputs — use sentinel -1.0 when feature is not active
+    rd_arr = rd_per_frame if rd_per_frame is not None else jnp.full(n_frames, -1.0)
+    asp_arr = asp_per_frame if asp_per_frame is not None else jnp.full(n_frames, -1.0)
+
     _, result = jax.lax.scan(
-        one_frame, 0.0, (tenseness[:-1], t.reshape(n_frames, frame_len), keys)
+        one_frame, 0.0, (tenseness[:-1], t.reshape(n_frames, frame_len), keys, rd_arr, asp_arr)
     )
     return jnp.ravel(result)
 
-def setup_lf(tenseness):
+def setup_lf(tenseness, rd_override=None):
     """
     Returns parameters of Liljencrants-Fant (LF) model of GFD waveform based on tenseness.
     https://www.tara.tcd.ie/bitstream/handle/2262/92586/Gobl%20-%20Reshaping%20the%20transformed%20LF%20model%20-%20Interspeech2017.pdf;jsessionid=766CC7D94CED11EDA65F1098918A18D1?sequence=1
+
+    If rd_override >= 0, use it directly as Rd. Otherwise derive from tenseness.
     """
-    Rd = 3 * (1 - tenseness)
+    Rd_from_tense = 3 * (1 - tenseness)
+    Rd = jnp.where(rd_override >= 0, rd_override, Rd_from_tense)
     Rd = jnp.clip(Rd, 0.5, 2.7)
 
     Ra = -0.01 + 0.048 * Rd
