@@ -145,6 +145,8 @@ def main(cfg: Config) -> None:
         add_postfilter=cfg.general.add_postfilter,
         add_aspiration=cfg.general.add_aspiration,
         add_rd=cfg.general.add_rd,
+        add_learned_loss=cfg.general.add_learned_loss,
+        tract_segments=cfg.general.tract_segments,
     )
     init_key = PRNG_key.split()
     params = tract.init(init_key)
@@ -169,7 +171,7 @@ def main(cfg: Config) -> None:
 
     if cfg.general.add_postfilter:
         from scipy.signal import firls
-        fir_order = 63  # odd-length FIR
+        fir_order = 255  # odd-length FIR
         # Welch PSD of target and initial synth
         target_trim = np.array(target[:len(audio)])
         synth_init = np.array(audio)
@@ -185,7 +187,7 @@ def main(cfg: Config) -> None:
         freqs_norm = np.clip(freqs_norm, 0, 1)
         # firls needs monotonically increasing band edges in pairs
         # Downsample to ~16 bands for stability
-        n_bands = 16
+        n_bands = 32
         indices = np.linspace(0, len(freqs_norm) - 1, n_bands + 1).astype(int)
         band_freqs = [0.0]
         band_gains = [float(gain[0])]
@@ -241,6 +243,11 @@ def main(cfg: Config) -> None:
     # Log initial params
     soundfile.write(os.path.join(log_dir, "0.wav"), audio, sr)
 
+    # Per-epoch loss log
+    loss_csv_path = os.path.join(log_dir, "loss_curve.csv")
+    with open(loss_csv_path, "w") as f:
+        f.write("epoch,loss\n")
+
     # Optimization loop
     pbar = tqdm(range(cfg.general.iters))
     for i in pbar:
@@ -272,8 +279,10 @@ def main(cfg: Config) -> None:
             params
         )
 
-        # Log metrics to progress bar
+        # Log metrics to progress bar and CSV
         pbar.set_postfix({"loss": loss.item()})
+        with open(loss_csv_path, "a") as f:
+            f.write(f"{i+1},{loss.item()}\n")
         if jnp.isnan(loss) or jnp.isinf(loss):
             print(f"\nERROR: Loss became {loss.item()} at step {i}. Aborting.")
             soundfile.write(os.path.join(log_dir, f"{i+1}_diverged.wav"), audio, sr)

@@ -81,6 +81,8 @@ class General:
     add_postfilter: bool
     add_aspiration: bool
     add_rd: bool
+    add_learned_loss: bool
+    tract_segments: int
 
     # Run name for distinguishing experiments
     run_name: str

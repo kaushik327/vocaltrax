@@ -152,6 +152,8 @@ class VocalTract(nn.Module):
     add_postfilter: bool = False
     add_aspiration: bool = False
     add_rd: bool = False
+    add_learned_loss: bool = False
+    tract_segments: int = 44
 
     def setup(self):
         self.key = self.make_rng("key")
@@ -207,6 +209,14 @@ class VocalTract(nn.Module):
                 lambda rng: jnp.ones((self.num_frames, 1)) * 0.2
             )
 
+        # Learnable per-segment damping: init near 0.999 (default)
+        # Optimized in [0,1] space, mapped to [0.990, 1.000]
+        if self.add_learned_loss:
+            n_seg = self.tract_segments
+            self.segment_loss_params = self.param(
+                "segment_loss_params",
+                lambda rng: jnp.ones(n_seg) * 0.9  # maps to ~0.999
+            )
 
     def __call__(self):
         diams = self.physical_apply(self.physical_params)
@@ -262,6 +272,19 @@ class VocalTract(nn.Module):
             fricative = jnp.clip(self.fricative_intensity, 0, 1)
             fricative = upsample_frames(fricative, self.upsample_factor)
 
+        # Interpolate tract to target segment count if different from native 44
+        target_segs = self.tract_segments
+        if target_segs != diams.shape[1]:
+            x_old = jnp.linspace(0, 1, diams.shape[1])
+            x_new = jnp.linspace(0, 1, target_segs)
+            diams = jax.vmap(lambda d: jnp.interp(x_new, x_old, d))(diams)
+
+        # Learnable per-segment loss
+        learned_loss = None
+        if self.add_learned_loss:
+            # Map [0,1] -> [0.990, 1.000]
+            learned_loss = 0.990 + 0.010 * jnp.clip(self.segment_loss_params, 0, 1)
+
         out = process_diams(
             waveform,
             diams,
@@ -279,6 +302,7 @@ class VocalTract(nn.Module):
             add_tilt=self.add_tilt,
             add_radiation=self.add_radiation,
             add_wall_loss=self.add_wall_loss,
+            learned_loss=learned_loss,
         )
 
         return out
@@ -301,6 +325,7 @@ def process_diams(
     add_tilt: bool = False,
     add_radiation: bool = False,
     add_wall_loss: bool = False,
+    learned_loss: chex.Array = None,
 ) -> chex.Array:
     """
     Vocal tract waveguide simulation with optional enhanced features:
@@ -336,8 +361,10 @@ def process_diams(
     else:
         fricative_intensity = jnp.zeros(n)
 
-    # Frequency-dependent wall losses (or uniform if disabled)
-    if add_wall_loss:
+    # Per-segment damping
+    if learned_loss is not None:
+        segment_loss = learned_loss
+    elif add_wall_loss:
         segment_loss = 0.999 - 0.002 * jnp.linspace(0, 1, size)
     else:
         segment_loss = jnp.ones(size) * 0.999
