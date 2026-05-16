@@ -63,13 +63,14 @@ def main(cfg: Config) -> None:
     ##############################################
 
     current_datetime = datetime.now().strftime("%a-%b-%d-%Y_%I-%M%p")
+    run_suffix = f"_{cfg.general.run_name}" if cfg.general.run_name else ""
     log_dir = os.path.join(
         cfg.general.log_dir,
         os.path.splitext(os.path.basename(cfg.general.target))[0], # Target name
         cfg.optimizer.name,
         cfg.spectrogram.name,
         cfg.preloss.name,
-        current_datetime
+        f"{current_datetime}{run_suffix}"
     )
     os.makedirs(log_dir, exist_ok=True)
 
@@ -136,6 +137,16 @@ def main(cfg: Config) -> None:
         frame_len=cfg.general.frame_length,
         sample_rate=cfg.general.sample_rate,
         f0s=jnp.array(freqs).reshape(len(freqs), 1),
+        add_nose=cfg.general.add_nose,
+        add_fricatives=cfg.general.add_fricatives,
+        add_tilt=cfg.general.add_tilt,
+        add_radiation=cfg.general.add_radiation,
+        add_wall_loss=cfg.general.add_wall_loss,
+        add_postfilter=cfg.general.add_postfilter,
+        add_aspiration=cfg.general.add_aspiration,
+        add_rd=cfg.general.add_rd,
+        add_learned_loss=cfg.general.add_learned_loss,
+        tract_segments=cfg.general.tract_segments,
     )
     init_key = PRNG_key.split()
     params = tract.init(init_key)
@@ -153,6 +164,57 @@ def main(cfg: Config) -> None:
 
     preloss_func = jax.jit(hydra.utils.instantiate(cfg.preloss.fun, _partial_=True))
     spec_func = jax.jit(hydra.utils.instantiate(cfg.spectrogram.fun, _partial_=True))
+
+    ##############################################
+    # Pre-solved postfilter (FIR spectral matching)
+    ##############################################
+
+    if cfg.general.add_postfilter:
+        from scipy.signal import firls
+        fir_order = 255  # odd-length FIR
+        # Welch PSD of target and initial synth
+        target_trim = np.array(target[:len(audio)])
+        synth_init = np.array(audio)
+        nperseg = min(2048, len(target_trim) // 4)
+        f_welch, psd_target = scipy.signal.welch(target_trim, sr, nperseg=nperseg)
+        _, psd_synth = scipy.signal.welch(synth_init, sr, nperseg=nperseg)
+        # Desired gain = sqrt(target_psd / synth_psd), clamped
+        gain = np.sqrt((psd_target + 1e-12) / (psd_synth + 1e-12))
+        gain = np.clip(gain, 0.1, 10.0)
+        # Build frequency/gain bands for firls (needs pairs: [f0, f1, f2, f3, ...], [g0, g1, g2, g3, ...])
+        # Normalize freqs to [0, 1] (Nyquist = 1)
+        freqs_norm = f_welch / (sr / 2)
+        freqs_norm = np.clip(freqs_norm, 0, 1)
+        # firls needs monotonically increasing band edges in pairs
+        # Downsample to ~16 bands for stability
+        n_bands = 32
+        indices = np.linspace(0, len(freqs_norm) - 1, n_bands + 1).astype(int)
+        band_freqs = [0.0]
+        band_gains = [float(gain[0])]
+        for idx in indices[1:]:
+            band_freqs.append(float(freqs_norm[idx]))
+            band_gains.append(float(gain[idx]))
+        # Ensure last freq is exactly 1.0
+        band_freqs[-1] = 1.0
+        # firls wants paired edges: [f0, f1, f1, f2, f2, ...]
+        firls_freqs = []
+        firls_gains = []
+        for i in range(len(band_freqs) - 1):
+            firls_freqs.extend([band_freqs[i], band_freqs[i + 1]])
+            firls_gains.extend([band_gains[i], band_gains[i + 1]])
+        postfilter_fir = jnp.array(firls(fir_order, firls_freqs, firls_gains))
+        print(f"Pre-solved postfilter: {fir_order}-tap FIR (gain range {gain.min():.2f}–{gain.max():.2f})")
+
+        # Wrap tract_apply to convolve with FIR
+        _orig_tract_apply = tract_apply
+        @jax.jit
+        def tract_apply_postfilter(params, rngs):
+            raw = _orig_tract_apply(params, rngs=rngs)
+            return jnp.convolve(raw, postfilter_fir, mode='same')
+        tract_apply = tract_apply_postfilter
+        # Recompute initial audio with postfilter
+        audio = tract_apply(params, rngs={"params": init_key})
+
     loss_target = preloss_func(spec_func((target[: len(audio)])))
 
     def loss_fn(params, key):
@@ -180,6 +242,11 @@ def main(cfg: Config) -> None:
 
     # Log initial params
     soundfile.write(os.path.join(log_dir, "0.wav"), audio, sr)
+
+    # Per-epoch loss log
+    loss_csv_path = os.path.join(log_dir, "loss_curve.csv")
+    with open(loss_csv_path, "w") as f:
+        f.write("epoch,loss\n")
 
     # Optimization loop
     pbar = tqdm(range(cfg.general.iters))
@@ -212,8 +279,10 @@ def main(cfg: Config) -> None:
             params
         )
 
-        # Log metrics to progress bar
+        # Log metrics to progress bar and CSV
         pbar.set_postfix({"loss": loss.item()})
+        with open(loss_csv_path, "a") as f:
+            f.write(f"{i+1},{loss.item()}\n")
         if jnp.isnan(loss) or jnp.isinf(loss):
             print(f"\nERROR: Loss became {loss.item()} at step {i}. Aborting.")
             soundfile.write(os.path.join(log_dir, f"{i+1}_diverged.wav"), audio, sr)

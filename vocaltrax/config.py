@@ -72,6 +72,21 @@ class General:
     f_min: float
     f_max: float
 
+    # Enhanced vocal tract features (feature flags)
+    add_nose: bool
+    add_fricatives: bool
+    add_tilt: bool
+    add_radiation: bool
+    add_wall_loss: bool
+    add_postfilter: bool
+    add_aspiration: bool
+    add_rd: bool
+    add_learned_loss: bool
+    tract_segments: int
+
+    # Run name for distinguishing experiments
+    run_name: str
+
 #######################
 # Default Settings
 #######################

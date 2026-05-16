@@ -54,6 +54,21 @@ general:
   f_min: 60.0
   f_max: 7800.0
 
+  # Enhanced vocal tract features (feature flags)
+  add_nose: false        # Nasal tract coupling at velum
+  add_fricatives: false  # Turbulence noise at constrictions
+  add_tilt: false        # Glottal spectral tilt (1st-order lowpass)
+  add_radiation: false   # Radiation impedance (1st-order highpass at lips)
+  add_wall_loss: false   # Frequency-dependent wall losses
+  add_postfilter: false  # Pre-solved FIR spectral-matching filter
+  add_aspiration: false  # Learnable per-frame aspiration amplitude
+  add_rd: false          # Learnable per-frame Rd (voice quality) parameter
+  add_learned_loss: false # Learnable per-segment damping coefficients
+  tract_segments: 44     # Number of waveguide segments (44 = default, higher = better formants)
+
+  # Run name for distinguishing experiments (empty = use timestamp only)
+  run_name: ""
+
 ######################
 # System Settings
 ######################
